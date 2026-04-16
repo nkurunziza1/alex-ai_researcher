@@ -31,7 +31,7 @@ defaults:
 
 jobs:
   deploy:
-    name: Agents (Part 6) then API + UI (Part 7)
+    name: Alex ai Agents (Part 6)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -63,7 +63,6 @@ jobs:
       - name: Print AWS identity
         run: aws sts get-caller-identity
 
-
       - name: Sync backend workspace
         working-directory: backend
         run: uv sync
@@ -75,12 +74,13 @@ jobs:
       - name: Package (optional) and deploy agent Lambdas
         working-directory: backend
         run: |
+          # Avoid inheriting backend/.venv as VIRTUAL_ENV when each agent uses its own .venv
+          unset VIRTUAL_ENV
           if [ "${{ inputs.package_agents }}" = "true" ]; then
             uv run deploy_all_lambdas.py --package
           else
             uv run deploy_all_lambdas.py
           fi
-
 
       - name: Sync backend API project (package_docker for API Lambda)
         working-directory: backend/api

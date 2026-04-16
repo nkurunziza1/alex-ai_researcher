@@ -28,7 +28,7 @@ def package_lambda():
     backend_dir = charter_dir.parent
     
     # Create a temporary directory for packaging
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         temp_path = Path(temp_dir)
         package_dir = temp_path / "package"
         package_dir.mkdir()

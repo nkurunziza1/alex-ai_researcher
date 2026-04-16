@@ -29,8 +29,8 @@ def package_lambda():
     backend_dir = planner_dir.parent
     project_root = backend_dir.parent
     
-    # Create a temporary directory for packaging
-    with tempfile.TemporaryDirectory() as temp_dir:
+    # Docker writes root-owned files into the mount; temp cleanup can fail on CI (ignore after zip is built).
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
         temp_path = Path(temp_dir)
         package_dir = temp_path / "package"
         package_dir.mkdir()
