@@ -1,0 +1,104 @@
+# One workflow: Part 6 agent Lambdas (OpenRouter) then Part 7 API Lambda + Next.js + S3 + CloudFront.
+name: Deploy backend + frontend
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_agents:
+        description: "Docker-package all five agent Lambdas before terraform apply (recommended after agent code changes)"
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  CI: true
+  TF_VAR_aws_region: ${{ secrets.ALEX_AWS_REGION }}
+  TF_VAR_aurora_cluster_arn: ${{ secrets.ALEX_AURORA_CLUSTER_ARN }}
+  TF_VAR_aurora_secret_arn: ${{ secrets.ALEX_AURORA_SECRET_ARN }}
+  TF_VAR_vector_bucket: ${{ secrets.ALEX_VECTOR_BUCKET }}
+  TF_VAR_openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
+  TF_VAR_polygon_api_key: ${{ secrets.ALEX_POLYGON_API_KEY }}
+  TF_VAR_clerk_jwks_url: ${{ secrets.ALEX_CLERK_JWKS_URL }}
+  TF_VAR_clerk_issuer: ${{ secrets.ALEX_CLERK_ISSUER }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  deploy:
+    name: Agents (Part 6) then API + UI (Part 7)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.ALEX_AWS_REGION }}
+
+      - name: Enable Docker BuildKit (Lambda packaging)
+        run: echo "DOCKER_BUILDKIT=1" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Terraform CLI
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Print AWS identity
+        run: aws sts get-caller-identity
+
+
+      - name: Sync backend workspace
+        working-directory: backend
+        run: uv sync
+
+      - name: Terraform init
+        working-directory: terraform/6_agents
+        run: terraform init -input=false
+
+      - name: Package (optional) and deploy agent Lambdas
+        working-directory: backend
+        run: |
+          if [ "${{ inputs.package_agents }}" = "true" ]; then
+            uv run deploy_all_lambdas.py --package
+          else
+            uv run deploy_all_lambdas.py
+          fi
+
+
+      - name: Sync backend API project (package_docker for API Lambda)
+        working-directory: backend/api
+        run: uv sync
+
+      - name: Write frontend
+        working-directory: frontend
+        env:
+          PK: ${{ secrets.ALEX_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          SK: ${{ secrets.ALEX_CLERK_SECRET_KEY }}
+        run: |
+          cat > .env.production <<EOF
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${PK}
+          CLERK_SECRET_KEY=${SK}
+          NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
+          NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard
+          EOF
+
+      - name: Run full deployment
+        working-directory: scripts
+        run: uv run deploy.py

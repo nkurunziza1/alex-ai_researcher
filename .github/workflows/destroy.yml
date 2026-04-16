@@ -1,0 +1,67 @@
+name: Destroy (Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Label for this teardown (must match confirm)"
+        required: true
+        type: choice
+        options:
+          - demo
+          - dev
+      confirm:
+        description: "Type the same word as environment above to confirm"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  destroy:
+    name: Destroy ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - name: Verify confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "${{ github.event.inputs.environment }}" ]; then
+            echo "Confirmation does not match environment."
+            exit 1
+          fi
+          echo "Destruction confirmed for ${{ github.event.inputs.environment }}"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-alex-destroy
+          aws-region: ${{ secrets.ALEX_AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Run destroy script
+        env:
+          AWS_REGION: ${{ secrets.ALEX_AWS_REGION }}
+        run: |
+          chmod +x scripts/destroy.sh
+          ./scripts/destroy.sh "${{ github.event.inputs.environment }}" --yes
+
+      - name: Destruction complete
+        run: |
+          echo "If this failed with missing state, run locally: ./scripts/destroy.sh demo --yes"
+          echo "Revoke OpenRouter keys at https://openrouter.ai when Lambdas are gone."
