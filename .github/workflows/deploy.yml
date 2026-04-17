@@ -86,13 +86,32 @@ jobs:
         run: |
           set -euo pipefail
           terraform init -input=false
-          # Local state is not in git; each CI run starts empty. If a prior run created
-          # subnet group / IAM role in AWS but failed before state was persisted, adopt them.
-          if aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group --output text >/dev/null 2>&1; then
-            terraform import -input=false aws_db_subnet_group.aurora alex-aurora-subnet-group
+          # Local state is not persisted in CI. Attempt imports every run.
+          # Ignore only "non-existent remote object"; fail on permission/other errors.
+          set +e
+          SUBNET_IMPORT_OUTPUT="$(terraform import -input=false aws_db_subnet_group.aurora alex-aurora-subnet-group 2>&1)"
+          SUBNET_IMPORT_EXIT=$?
+          set -e
+          if [ "$SUBNET_IMPORT_EXIT" -ne 0 ]; then
+            if [[ "$SUBNET_IMPORT_OUTPUT" == *"Cannot import non-existent remote object"* ]]; then
+              echo "DB subnet group not found remotely; Terraform will create it."
+            else
+              echo "$SUBNET_IMPORT_OUTPUT"
+              exit "$SUBNET_IMPORT_EXIT"
+            fi
           fi
-          if aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1; then
-            terraform import -input=false aws_iam_role.lambda_aurora_role alex-lambda-aurora-role
+
+          set +e
+          ROLE_IMPORT_OUTPUT="$(terraform import -input=false aws_iam_role.lambda_aurora_role alex-lambda-aurora-role 2>&1)"
+          ROLE_IMPORT_EXIT=$?
+          set -e
+          if [ "$ROLE_IMPORT_EXIT" -ne 0 ]; then
+            if [[ "$ROLE_IMPORT_OUTPUT" == *"Cannot import non-existent remote object"* ]]; then
+              echo "IAM role not found remotely; Terraform will create it."
+            else
+              echo "$ROLE_IMPORT_OUTPUT"
+              exit "$ROLE_IMPORT_EXIT"
+            fi
           fi
           terraform apply -auto-approve
 
