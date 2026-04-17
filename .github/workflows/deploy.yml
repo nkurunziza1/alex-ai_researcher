@@ -84,9 +84,16 @@ jobs:
       - name: Deploy database infrastructure
         working-directory: terraform/5_database
         run: |
+          set -euo pipefail
           terraform init -input=false
-          terraform import aws_db_subnet_group.aurora alex-aurora-subnet-group || echo "DB subnet group already managed or not found for import"
-          terraform import aws_iam_role.lambda_aurora_role alex-lambda-aurora-role || echo "IAM role already managed or not found for import"
+          # Local state is not in git; each CI run starts empty. If a prior run created
+          # subnet group / IAM role in AWS but failed before state was persisted, adopt them.
+          if aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group --output text >/dev/null 2>&1; then
+            terraform import -input=false aws_db_subnet_group.aurora alex-aurora-subnet-group
+          fi
+          if aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1; then
+            terraform import -input=false aws_iam_role.lambda_aurora_role alex-lambda-aurora-role
+          fi
           terraform apply -auto-approve
 
       # Step 2: Deploy the 6_agents infrastructure
