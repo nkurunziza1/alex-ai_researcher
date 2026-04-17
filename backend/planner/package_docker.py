@@ -12,6 +12,14 @@ import subprocess
 import argparse
 from pathlib import Path
 
+def _docker_run_user_args():
+    """Run container as host UID/GID so bind mounts are not root-owned (matches SaaS-style CI safety)."""
+    try:
+        return ["--user", f"{os.getuid()}:{os.getgid()}"]
+    except AttributeError:
+        return []
+
+
 def run_command(cmd, cwd=None):
     """Run a command and capture output."""
     print(f"Running: {' '.join(cmd)}")
@@ -62,6 +70,7 @@ def package_lambda():
         docker_cmd = [
             "docker", "run", "--rm",
             "--platform", "linux/amd64",
+            *_docker_run_user_args(),
             "-v", f"{temp_path}:/build",
             "-v", f"{backend_dir}/database:/database",
             "-v", f"{backend_dir}/agent_llm:/agent_llm",

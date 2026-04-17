@@ -12,6 +12,13 @@ import argparse
 from pathlib import Path
 
 
+def _docker_run_user_args():
+    try:
+        return ["--user", f"{os.getuid()}:{os.getgid()}"]
+    except AttributeError:
+        return []
+
+
 def run_command(cmd, cwd=None):
     """Run a command and capture output."""
     print(f"Running: {' '.join(cmd)}")
@@ -62,6 +69,7 @@ def package_lambda():
             "--rm",
             "--platform",
             "linux/amd64",
+            *_docker_run_user_args(),
             "-v",
             f"{temp_path}:/build",
             "-v",
