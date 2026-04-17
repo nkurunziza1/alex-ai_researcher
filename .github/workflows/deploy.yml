@@ -113,6 +113,26 @@ jobs:
               exit "$ROLE_IMPORT_EXIT"
             fi
           fi
+
+          echo "Current Terraform state entries:"
+          terraform state list || true
+
+          # If these resources already exist in AWS, they must be in Terraform state
+          # before apply, otherwise apply will try to recreate and fail.
+          if aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group --output text >/dev/null 2>&1; then
+            terraform state list | rg '^aws_db_subnet_group\.aurora$' >/dev/null || {
+              echo "DB subnet group exists in AWS but is not in Terraform state after import."
+              exit 1
+            }
+          fi
+
+          if aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1; then
+            terraform state list | rg '^aws_iam_role\.lambda_aurora_role$' >/dev/null || {
+              echo "IAM role exists in AWS but is not in Terraform state after import."
+              exit 1
+            }
+          fi
+
           terraform apply -auto-approve
 
       # Step 2: Deploy the 6_agents infrastructure
