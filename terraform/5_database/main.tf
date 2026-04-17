@@ -57,48 +57,17 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
   })
 }
 
-# DB Subnet Group (using default VPC)
-data "aws_vpc" "default" {
-  default = true
-}
-
+# DB Subnet Group (using default subnets in each AZ)
 data "aws_subnets" "default" {
   filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
+    name   = "default-for-az"
+    values = ["true"]
   }
 }
 
 resource "aws_db_subnet_group" "aurora" {
   name       = "alex-aurora-subnet-group"
   subnet_ids = data.aws_subnets.default.ids
-  
-  tags = {
-    Project = "alex"
-    Part    = "5"
-  }
-}
-
-# Security group for Aurora
-resource "aws_security_group" "aurora" {
-  name        = "alex-aurora-sg"
-  description = "Security group for Alex Aurora cluster"
-  vpc_id      = data.aws_vpc.default.id
-  
-  # Allow PostgreSQL access from within VPC
-  ingress {
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.default.cidr_block]
-  }
-  
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
   
   tags = {
     Project = "alex"
@@ -127,7 +96,6 @@ resource "aws_rds_cluster" "aurora" {
   
   # Networking
   db_subnet_group_name   = aws_db_subnet_group.aurora.name
-  vpc_security_group_ids = [aws_security_group.aurora.id]
   
   # Backup and maintenance
   backup_retention_period   = 7
