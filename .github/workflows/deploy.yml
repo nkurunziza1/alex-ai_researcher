@@ -1,4 +1,21 @@
 # One workflow: Part 6 agent Lambdas (OpenRouter) then Part 7 API Lambda + Next.js + S3 + CloudFront.
+#
+# GitHub → Settings → Secrets and variables → Actions → Repository secrets
+# (nothing is inferred automatically; each TF_VAR_* below must have a matching secret or the value is empty).
+#
+#   AWS_ROLE_ARN, ALEX_AWS_REGION
+#     OIDC + region (same idea as saas/saas, but Alex uses ALEX_AWS_REGION as the secret name).
+#   ALEX_AURORA_CLUSTER_ARN, ALEX_AURORA_SECRET_ARN, ALEX_VECTOR_BUCKET
+#     Required for Terraform in terraform/6_agents (same values as local terraform.tfvars from Parts 3 & 5).
+#     Legacy names also accepted: AURORA_SECRET_ARN, VECTOR_BUCKET (if ALEX_* is unset).
+#   POLYGON_PLAN (optional) — "free" or "paid"; defaults to free if unset.
+#   OPENROUTER_API_KEY, ALEX_POLYGON_API_KEY
+#     Agent Lambdas / market data.
+#   ALEX_CLERK_JWKS_URL, ALEX_CLERK_ISSUER
+#     Part 7 API Lambda env.
+#   ALEX_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, ALEX_CLERK_SECRET_KEY
+#     Frontend .env.production at build time.
+#
 name: Deploy backend + frontend
 
 on:
@@ -23,10 +40,11 @@ env:
   CI: true
   TF_VAR_aws_region: ${{ secrets.ALEX_AWS_REGION }}
   TF_VAR_aurora_cluster_arn: ${{ secrets.ALEX_AURORA_CLUSTER_ARN }}
-  TF_VAR_aurora_secret_arn: ${{ secrets.ALEX_AURORA_SECRET_ARN }}
-  TF_VAR_vector_bucket: ${{ secrets.ALEX_VECTOR_BUCKET }}
+  TF_VAR_aurora_secret_arn: ${{ secrets.ALEX_AURORA_SECRET_ARN != '' && secrets.ALEX_AURORA_SECRET_ARN || secrets.AURORA_SECRET_ARN }}
+  TF_VAR_vector_bucket: ${{ secrets.ALEX_VECTOR_BUCKET != '' && secrets.ALEX_VECTOR_BUCKET || secrets.VECTOR_BUCKET }}
   TF_VAR_openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
   TF_VAR_polygon_api_key: ${{ secrets.ALEX_POLYGON_API_KEY }}
+  TF_VAR_polygon_plan: ${{ secrets.POLYGON_PLAN != '' && secrets.POLYGON_PLAN || 'free' }}
   TF_VAR_clerk_jwks_url: ${{ secrets.ALEX_CLERK_JWKS_URL }}
   TF_VAR_clerk_issuer: ${{ secrets.ALEX_CLERK_ISSUER }}
 

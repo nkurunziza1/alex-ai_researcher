@@ -19,7 +19,136 @@ import sys
 import subprocess
 import os
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Set
+
+from botocore.exceptions import ClientError
+
+
+def _terraform_state_list(terraform_dir: Path) -> Set[str]:
+    """Return addresses in Terraform state (empty set if no state or error)."""
+    result = subprocess.run(
+        ["terraform", "state", "list"],
+        cwd=terraform_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _run_terraform_import(terraform_dir: Path, address: str, import_id: str) -> bool:
+    """Run terraform import; return True on success."""
+    result = subprocess.run(
+        ["terraform", "import", "-input=false", address, import_id],
+        cwd=terraform_dir,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        print(f"      ✓ Imported {address}")
+        return True
+    err = (result.stderr or "") + (result.stdout or "")
+    if "already managed" in err or "Resource already managed" in err:
+        print(f"      ⟳ {address} already in state")
+        return True
+    print(f"      ⚠️ Import {address}: {err[:300]}")
+    return False
+
+
+def best_effort_import_existing_aws_into_state(terraform_dir: Path) -> None:
+    """
+    When Terraform state is empty (e.g. GitHub Actions) but resources already exist in AWS
+    from a previous run or laptop deploy, import them so apply updates instead of failing
+    with EntityAlreadyExists / ResourceConflictException.
+    """
+    state = _terraform_state_list(terraform_dir)
+    reuse = os.environ.get("TF_VAR_reuse_existing_agent_infrastructure", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+    try:
+        sts = boto3.client("sts")
+        account_id = sts.get_caller_identity()["Account"]
+    except ClientError as e:
+        print(f"   ⚠️ Skipping import pre-pass (STS): {e}")
+        return
+
+    region = (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or os.environ.get("TF_VAR_aws_region")
+    )
+    if not region:
+        session = boto3.Session()
+        region = session.region_name or "us-east-1"
+
+    # IAM role + S3 bucket (only when Terraform creates them, not data-source reuse mode)
+    if not reuse:
+        if "aws_iam_role.lambda_agents_role[0]" not in state:
+            iam = boto3.client("iam")
+            try:
+                iam.get_role(RoleName="alex-lambda-agents-role")
+                _run_terraform_import(
+                    terraform_dir,
+                    "aws_iam_role.lambda_agents_role[0]",
+                    "alex-lambda-agents-role",
+                )
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "NoSuchEntity":
+                    print(f"   ⚠️ IAM get_role: {e}")
+
+        bucket_name = f"alex-lambda-packages-{account_id}"
+        if "aws_s3_bucket.lambda_packages[0]" not in state:
+            s3 = boto3.client("s3", region_name=region)
+            try:
+                s3.head_bucket(Bucket=bucket_name)
+                _run_terraform_import(
+                    terraform_dir,
+                    "aws_s3_bucket.lambda_packages[0]",
+                    bucket_name,
+                )
+            except ClientError as e:
+                code = e.response.get("Error", {}).get("Code", "")
+                if code not in ("404", "NoSuchBucket", "NotFound"):
+                    print(f"   ⚠️ S3 head_bucket: {e}")
+
+    # SQS: DLQ first (main queue references DLQ in redrive policy)
+    sqs = boto3.client("sqs", region_name=region)
+    for resource_addr, queue_name in (
+        ("aws_sqs_queue.analysis_jobs_dlq", "alex-analysis-jobs-dlq"),
+        ("aws_sqs_queue.analysis_jobs", "alex-analysis-jobs"),
+    ):
+        if resource_addr in state:
+            continue
+        try:
+            url = sqs.get_queue_url(QueueName=queue_name)["QueueUrl"]
+            _run_terraform_import(terraform_dir, resource_addr, url)
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "AWS.SimpleQueueService.NonExistentQueue":
+                print(f"   ⚠️ SQS {queue_name}: {e}")
+
+    # Lambda functions
+    lambda_client = boto3.client("lambda", region_name=region)
+    for func in ("planner", "tagger", "reporter", "charter", "retirement"):
+        addr = f"aws_lambda_function.{func}"
+        if addr in state:
+            continue
+        name = f"alex-{func}"
+        try:
+            lambda_client.get_function(FunctionName=name)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ResourceNotFoundException":
+                continue
+            print(f"   ⚠️ Lambda get_function {name}: {e}")
+            continue
+        _run_terraform_import(terraform_dir, addr, name)
+
+    # Refresh state set for downstream taint/apply
+    _ = _terraform_state_list(terraform_dir)
+
 
 def taint_and_deploy_via_terraform() -> bool:
     """
@@ -37,6 +166,11 @@ def taint_and_deploy_via_terraform() -> bool:
     # Lambda function names to taint
     lambda_functions = ['planner', 'tagger', 'reporter', 'charter', 'retirement']
     
+    print("📌 Step 0: Import existing AWS resources into Terraform state (CI / empty state)...")
+    print("-" * 50)
+    best_effort_import_existing_aws_into_state(terraform_dir)
+    print()
+
     print("📌 Step 1: Tainting Lambda functions to force recreation...")
     print("-" * 50)
     
@@ -217,6 +351,8 @@ def main():
         print("   2. Ensure all packages exist (use --package flag)")
         print("   3. Verify AWS credentials and permissions")
         print("   4. Check terraform state: cd terraform/6_agents && terraform plan")
+        print("   5. CI: ensure GitHub secrets (ALEX_AURORA_*, ALEX_VECTOR_BUCKET, etc.) match your local terraform.tfvars")
+        print("   6. MalformedPolicyDocument usually means an empty or wrong ARN — fix secrets, then re-run")
         sys.exit(1)
 
 if __name__ == "__main__":

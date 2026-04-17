@@ -1,21 +1,41 @@
 variable "aws_region" {
   description = "AWS region for resources"
   type        = string
+
+  validation {
+    condition     = length(trimspace(var.aws_region)) > 0
+    error_message = "aws_region must be set (e.g. us-east-1). In GitHub Actions, set secret ALEX_AWS_REGION and TF_VAR_aws_region."
+  }
 }
 
 variable "aurora_cluster_arn" {
   description = "ARN of the Aurora cluster from Part 5"
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws:rds:", trimspace(var.aurora_cluster_arn)))
+    error_message = "aurora_cluster_arn must be a valid RDS cluster ARN (arn:aws:rds:...). Empty values break the IAM policy in CI if ALEX_AURORA_CLUSTER_ARN is missing."
+  }
 }
 
 variable "aurora_secret_arn" {
   description = "ARN of the Secrets Manager secret from Part 5"
   type        = string
+
+  validation {
+    condition     = can(regex("^arn:aws:secretsmanager:", trimspace(var.aurora_secret_arn)))
+    error_message = "aurora_secret_arn must be a valid Secrets Manager ARN (arn:aws:secretsmanager:...). Empty values break the IAM policy in CI if ALEX_AURORA_SECRET_ARN is missing."
+  }
 }
 
 variable "vector_bucket" {
   description = "S3 Vectors bucket name from Part 3"
   type        = string
+
+  validation {
+    condition     = length(trimspace(var.vector_bucket)) > 0
+    error_message = "vector_bucket must be non-empty (e.g. alex-vectors-ACCOUNT_ID). Empty values break the IAM policy in CI if ALEX_VECTOR_BUCKET is missing."
+  }
 }
 
 variable "openrouter_api_key" {
