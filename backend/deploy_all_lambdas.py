@@ -353,6 +353,7 @@ def main():
         print("   4. Check terraform state: cd terraform/6_agents && terraform plan")
         print("   5. CI: ensure GitHub secrets (ALEX_AURORA_*, ALEX_VECTOR_BUCKET, etc.) match your local terraform.tfvars")
         print("   6. MalformedPolicyDocument usually means an empty or wrong ARN — fix secrets, then re-run")
+        print("   7. Event source mapping 409: run latest deploy_all_lambdas (imports SQS→planner mapping UUID) or import manually")
         sys.exit(1)
 
 if __name__ == "__main__":
