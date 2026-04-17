@@ -85,6 +85,8 @@ jobs:
         working-directory: terraform/5_database
         run: |
           terraform init -input=false
+          terraform import aws_db_subnet_group.aurora alex-aurora-subnet-group || echo "DB subnet group already managed or not found for import"
+          terraform import aws_iam_role.lambda_aurora_role alex-lambda-aurora-role || echo "IAM role already managed or not found for import"
           terraform apply -auto-approve
 
       # Step 2: Deploy the 6_agents infrastructure
