@@ -74,6 +74,12 @@ jobs:
         working-directory: backend
         run: uv sync
 
+      - name: Debug commit and database main.tf snippet
+        run: |
+          echo "GITHUB_SHA=${GITHUB_SHA}"
+          echo "GITHUB_REF=${GITHUB_REF}"
+          sed -n '55,80p' terraform/5_database/main.tf
+
       # Step 1: Deploy the database infrastructure
       - name: Deploy database infrastructure
         working-directory: terraform/5_database
