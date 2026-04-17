@@ -39,3 +39,7 @@ polygon_plan    = "free"
 # langfuse_host       = "https://us.cloud.langfuse.com"
 # Optional OpenAI key (only if you enable non-OpenRouter tracing later)
 # openai_api_key = ""
+
+# When IAM role + S3 package bucket already exist in AWS but Terraform state is empty (e.g. CI without remote state),
+# set true so Terraform looks them up instead of creating. Use false on first deploy in a new account.
+# reuse_existing_agent_infrastructure = false

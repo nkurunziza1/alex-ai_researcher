@@ -5,7 +5,12 @@ on:
   workflow_dispatch:
     inputs:
       package_agents:
-        description: "Docker-package all five agent Lambdas before terraform apply (recommended after agent code changes)"
+        description: "Docker-package all five agent Lambdas before terraform apply"
+        required: true
+        type: boolean
+        default: true
+      reuse_existing_agent_infra:
+        description: "Reuse IAM role."
         required: true
         type: boolean
         default: true
@@ -31,8 +36,10 @@ defaults:
 
 jobs:
   deploy:
-    name: Alex ai Agents (Part 6)
+    name: Alex ai Agents
     runs-on: ubuntu-latest
+    env:
+      TF_VAR_reuse_existing_agent_infrastructure: ${{ inputs.reuse_existing_agent_infra }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -74,6 +74,13 @@ variable "langfuse_host" {
   default     = "https://us.cloud.langfuse.com"
 }
 
+# Set true when IAM role + S3 bucket already exist in AWS but Terraform state is empty (e.g. GitHub Actions without remote state).
+variable "reuse_existing_agent_infrastructure" {
+  description = "If true, look up existing alex-lambda-agents-role and alex-lambda-packages-ACCOUNT bucket instead of creating them."
+  type        = bool
+  default     = false
+}
+
 # Optional: enable OpenAI Agents SDK trace export (only if not using OpenRouter)
 variable "openai_api_key" {
   description = "OpenAI API key for Agents SDK tracing (optional; unused when OPENROUTER_API_KEY is set in Lambda)"
