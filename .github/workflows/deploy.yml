@@ -74,7 +74,14 @@ jobs:
         working-directory: backend
         run: uv sync
 
-      - name: Terraform init
+      - name: Terraform apply 
+        working-directory: terraform/5_database
+        run: |
+          terraform init -input=false
+          terraform plan -input=false
+          terraform apply -input=false -auto-approve
+
+      - name: Terraform init (Part 6 agents)
         working-directory: terraform/6_agents
         run: terraform init -input=false
 
@@ -83,6 +90,12 @@ jobs:
         run: |
           # Import the existing Lambda event source mapping
           terraform import aws_lambda_event_source_mapping.planner_sqs fee018d8-0872-44e2-a4d3-1ea3d57aa0f7 || echo "Resource already imported or does not exist"
+
+      - name: Terraform apply (Part 6 agents)
+        working-directory: terraform/6_agents
+        run: |
+          terraform plan -input=false
+          terraform apply -input=false -auto-approve
 
       - name: Package (optional) and deploy agent Lambdas
         working-directory: backend
