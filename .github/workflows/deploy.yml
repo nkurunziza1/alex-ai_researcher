@@ -1,21 +1,3 @@
-# One workflow: Part 6 agent Lambdas (OpenRouter) then Part 7 API Lambda + Next.js + S3 + CloudFront.
-#
-# GitHub → Settings → Secrets and variables → Actions → Repository secrets
-# (nothing is inferred automatically; each TF_VAR_* below must have a matching secret or the value is empty).
-#
-#   AWS_ROLE_ARN, ALEX_AWS_REGION
-#     OIDC + region (same idea as saas/saas, but Alex uses ALEX_AWS_REGION as the secret name).
-#   ALEX_AURORA_CLUSTER_ARN, ALEX_AURORA_SECRET_ARN, ALEX_VECTOR_BUCKET
-#     Required for Terraform in terraform/6_agents (same values as local terraform.tfvars from Parts 3 & 5).
-#     Legacy names also accepted: AURORA_SECRET_ARN, VECTOR_BUCKET (if ALEX_* is unset).
-#   POLYGON_PLAN (optional) — "free" or "paid"; defaults to free if unset.
-#   OPENROUTER_API_KEY, ALEX_POLYGON_API_KEY
-#     Agent Lambdas / market data.
-#   ALEX_CLERK_JWKS_URL, ALEX_CLERK_ISSUER
-#     Part 7 API Lambda env.
-#   ALEX_NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, ALEX_CLERK_SECRET_KEY
-#     Frontend .env.production at build time.
-#
 name: Deploy backend + frontend
 
 on:
@@ -95,6 +77,12 @@ jobs:
       - name: Terraform init
         working-directory: terraform/6_agents
         run: terraform init -input=false
+
+      - name: Import existing resources (if necessary)
+        working-directory: terraform/6_agents
+        run: |
+          # Import the existing Lambda event source mapping
+          terraform import aws_lambda_event_source_mapping.planner_sqs fee018d8-0872-44e2-a4d3-1ea3d57aa0f7 || echo "Resource already imported or does not exist"
 
       - name: Package (optional) and deploy agent Lambdas
         working-directory: backend
