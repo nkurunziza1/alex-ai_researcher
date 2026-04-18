@@ -131,6 +131,13 @@ jobs:
           import_if_needed aws_iam_role.lambda_aurora_role alex-lambda-aurora-role \
             'aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1'
 
+          # Cluster before instance (instance references cluster).
+          import_if_needed aws_rds_cluster.aurora alex-aurora-cluster \
+            'aws rds describe-db-clusters --db-cluster-identifier alex-aurora-cluster >/dev/null 2>&1'
+
+          import_if_needed aws_rds_cluster_instance.aurora alex-aurora-instance-1 \
+            'aws rds describe-db-instances --db-instance-identifier alex-aurora-instance-1 >/dev/null 2>&1'
+
           echo "Current Terraform state entries:"
           terraform state list || true
 
@@ -144,6 +151,20 @@ jobs:
           if aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1; then
             terraform state list | grep -Fx 'aws_iam_role.lambda_aurora_role' >/dev/null || {
               echo "IAM role exists in AWS but is not in Terraform state after import."
+              exit 1
+            }
+          fi
+
+          if aws rds describe-db-clusters --db-cluster-identifier alex-aurora-cluster >/dev/null 2>&1; then
+            terraform state list | grep -Fx 'aws_rds_cluster.aurora' >/dev/null || {
+              echo "RDS cluster exists in AWS but is not in Terraform state after import."
+              exit 1
+            }
+          fi
+
+          if aws rds describe-db-instances --db-instance-identifier alex-aurora-instance-1 >/dev/null 2>&1; then
+            terraform state list | grep -Fx 'aws_rds_cluster_instance.aurora' >/dev/null || {
+              echo "RDS instance exists in AWS but is not in Terraform state after import."
               exit 1
             }
           fi
