@@ -86,48 +86,63 @@ jobs:
         run: |
           set -euo pipefail
           terraform init -input=false
-          # Local state is not persisted in CI. Attempt imports every run.
-          # Ignore only "non-existent remote object"; fail on permission/other errors.
-          set +e
-          SUBNET_IMPORT_OUTPUT="$(terraform import -input=false aws_db_subnet_group.aurora alex-aurora-subnet-group 2>&1)"
-          SUBNET_IMPORT_EXIT=$?
-          set -e
-          if [ "$SUBNET_IMPORT_EXIT" -ne 0 ]; then
-            if [[ "$SUBNET_IMPORT_OUTPUT" == *"Cannot import non-existent remote object"* ]]; then
-              echo "DB subnet group not found remotely; Terraform will create it."
-            else
-              echo "$SUBNET_IMPORT_OUTPUT"
-              exit "$SUBNET_IMPORT_EXIT"
-            fi
-          fi
+          # Local state is not persisted in CI. Align state with AWS before apply:
+          # - Already in state → skip (nothing to do)
+          # - In AWS but not in state → import (avoids AlreadyExists on apply)
+          # - Not in AWS → skip import; apply will create
 
-          set +e
-          ROLE_IMPORT_OUTPUT="$(terraform import -input=false aws_iam_role.lambda_aurora_role alex-lambda-aurora-role 2>&1)"
-          ROLE_IMPORT_EXIT=$?
-          set -e
-          if [ "$ROLE_IMPORT_EXIT" -ne 0 ]; then
-            if [[ "$ROLE_IMPORT_OUTPUT" == *"Cannot import non-existent remote object"* ]]; then
-              echo "IAM role not found remotely; Terraform will create it."
-            else
-              echo "$ROLE_IMPORT_OUTPUT"
-              exit "$ROLE_IMPORT_EXIT"
+          import_if_needed() {
+            local addr="$1"
+            local aws_id="$2"
+            local describe_cmd="$3"
+
+            if terraform state show -no-color "$addr" >/dev/null 2>&1; then
+              echo "$addr already in Terraform state; skip import."
+              return 0
             fi
-          fi
+            if ! eval "$describe_cmd"; then
+              echo "$addr not found in AWS; Terraform apply will create it."
+              return 0
+            fi
+            local out
+            set +e
+            out="$(terraform import -input=false "$addr" "$aws_id" 2>&1)"
+            local ec=$?
+            set -e
+            if [ "$ec" -eq 0 ]; then
+              echo "$out"
+              return 0
+            fi
+            if [[ "$out" == *"Cannot import non-existent remote object"* ]]; then
+              echo "$addr missing in AWS at import time; Terraform apply will create it."
+              return 0
+            fi
+            if [[ "$out" == *"Resource already managed by Terraform"* ]] || [[ "$out" == *"already in state"* ]]; then
+              echo "$addr already tracked; continuing."
+              return 0
+            fi
+            echo "$out"
+            return "$ec"
+          }
+
+          import_if_needed aws_db_subnet_group.aurora alex-aurora-subnet-group \
+            'aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group >/dev/null 2>&1'
+
+          import_if_needed aws_iam_role.lambda_aurora_role alex-lambda-aurora-role \
+            'aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1'
 
           echo "Current Terraform state entries:"
           terraform state list || true
 
-          # If these resources already exist in AWS, they must be in Terraform state
-          # before apply, otherwise apply will try to recreate and fail.
-          if aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group --output text >/dev/null 2>&1; then
-            terraform state list | rg '^aws_db_subnet_group\.aurora$' >/dev/null || {
+          if aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group >/dev/null 2>&1; then
+            terraform state list | grep -Fx 'aws_db_subnet_group.aurora' >/dev/null || {
               echo "DB subnet group exists in AWS but is not in Terraform state after import."
               exit 1
             }
           fi
 
           if aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1; then
-            terraform state list | rg '^aws_iam_role\.lambda_aurora_role$' >/dev/null || {
+            terraform state list | grep -Fx 'aws_iam_role.lambda_aurora_role' >/dev/null || {
               echo "IAM role exists in AWS but is not in Terraform state after import."
               exit 1
             }
