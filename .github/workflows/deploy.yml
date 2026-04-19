@@ -85,23 +85,25 @@ jobs:
         working-directory: terraform/5_database
         run: |
           set -euo pipefail
-          terraform init -input=false
-          # Local state is not persisted in CI. Align state with AWS before apply:
-          # - Already in state → skip (nothing to do)
-          # - In AWS but not in state → import (avoids AlreadyExists on apply)
-          # - Not in AWS → skip import; apply will create
+          # Match Terraform provider region (CLI "describe" checks could fail on IAM/region drift
+          # and wrongly skip imports — then apply hits DBClusterAlreadyExistsFault).
+          export AWS_DEFAULT_REGION="${TF_VAR_aws_region:-${AWS_REGION:-us-east-1}}"
+          export AWS_REGION="$AWS_DEFAULT_REGION"
+          echo "Using AWS region for imports/CLI: ${AWS_REGION}"
 
-          import_if_needed() {
+          terraform init -input=false
+          # Local state is not persisted in CI. Terraform never "skips" creates by name — it only
+          # knows what is in state. If a resource exists in AWS but not state, we must import it
+          # or apply will try to create and fail with AlreadyExists.
+
+          # Try import when not already in state. Do not gate on `aws describe` (Describe* may be
+          # denied while Create* is allowed, or region may not match TF_VAR).
+          try_import_if_absent() {
             local addr="$1"
             local aws_id="$2"
-            local describe_cmd="$3"
 
-            if terraform state show -no-color "$addr" >/dev/null 2>&1; then
+            if terraform state show "$addr" >/dev/null 2>&1; then
               echo "$addr already in Terraform state; skip import."
-              return 0
-            fi
-            if ! eval "$describe_cmd"; then
-              echo "$addr not found in AWS; Terraform apply will create it."
               return 0
             fi
             local out
@@ -113,8 +115,13 @@ jobs:
               echo "$out"
               return 0
             fi
-            if [[ "$out" == *"Cannot import non-existent remote object"* ]]; then
-              echo "$addr missing in AWS at import time; Terraform apply will create it."
+            if [[ "$out" == *"Cannot import non-existent remote object"* ]] \
+              || [[ "$out" == *"DBClusterNotFoundFault"* ]] \
+              || [[ "$out" == *"DBInstanceNotFound"* ]] \
+              || [[ "$out" == *"NoSuchEntity"* ]] \
+              || [[ "$out" == *"Subnet group not found"* ]]; then
+              echo "$out"
+              echo "Import skipped ($addr not found remotely); Terraform apply will create it if needed."
               return 0
             fi
             if [[ "$out" == *"Resource already managed by Terraform"* ]] || [[ "$out" == *"already in state"* ]]; then
@@ -125,49 +132,15 @@ jobs:
             return "$ec"
           }
 
-          import_if_needed aws_db_subnet_group.aurora alex-aurora-subnet-group \
-            'aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group >/dev/null 2>&1'
-
-          import_if_needed aws_iam_role.lambda_aurora_role alex-lambda-aurora-role \
-            'aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1'
+          try_import_if_absent aws_db_subnet_group.aurora alex-aurora-subnet-group
+          try_import_if_absent aws_iam_role.lambda_aurora_role alex-lambda-aurora-role
 
           # Cluster before instance (instance references cluster).
-          import_if_needed aws_rds_cluster.aurora alex-aurora-cluster \
-            'aws rds describe-db-clusters --db-cluster-identifier alex-aurora-cluster >/dev/null 2>&1'
-
-          import_if_needed aws_rds_cluster_instance.aurora alex-aurora-instance-1 \
-            'aws rds describe-db-instances --db-instance-identifier alex-aurora-instance-1 >/dev/null 2>&1'
+          try_import_if_absent aws_rds_cluster.aurora alex-aurora-cluster
+          try_import_if_absent aws_rds_cluster_instance.aurora alex-aurora-instance-1
 
           echo "Current Terraform state entries:"
           terraform state list || true
-
-          if aws rds describe-db-subnet-groups --db-subnet-group-name alex-aurora-subnet-group >/dev/null 2>&1; then
-            terraform state list | grep -Fx 'aws_db_subnet_group.aurora' >/dev/null || {
-              echo "DB subnet group exists in AWS but is not in Terraform state after import."
-              exit 1
-            }
-          fi
-
-          if aws iam get-role --role-name alex-lambda-aurora-role >/dev/null 2>&1; then
-            terraform state list | grep -Fx 'aws_iam_role.lambda_aurora_role' >/dev/null || {
-              echo "IAM role exists in AWS but is not in Terraform state after import."
-              exit 1
-            }
-          fi
-
-          if aws rds describe-db-clusters --db-cluster-identifier alex-aurora-cluster >/dev/null 2>&1; then
-            terraform state list | grep -Fx 'aws_rds_cluster.aurora' >/dev/null || {
-              echo "RDS cluster exists in AWS but is not in Terraform state after import."
-              exit 1
-            }
-          fi
-
-          if aws rds describe-db-instances --db-instance-identifier alex-aurora-instance-1 >/dev/null 2>&1; then
-            terraform state list | grep -Fx 'aws_rds_cluster_instance.aurora' >/dev/null || {
-              echo "RDS instance exists in AWS but is not in Terraform state after import."
-              exit 1
-            }
-          fi
 
           terraform apply -auto-approve
 
