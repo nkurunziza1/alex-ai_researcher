@@ -85,11 +85,17 @@ jobs:
         working-directory: terraform/5_database
         run: |
           set -euo pipefail
-          # Match Terraform provider region (CLI "describe" checks could fail on IAM/region drift
-          # and wrongly skip imports — then apply hits DBClusterAlreadyExistsFault).
-          export AWS_DEFAULT_REGION="${TF_VAR_aws_region:-${AWS_REGION:-us-east-1}}"
-          export AWS_REGION="$AWS_DEFAULT_REGION"
-          echo "Using AWS region for imports/CLI: ${AWS_REGION}"
+          # aws_region is required in this module; pass it explicitly on import/apply so the
+          # provider cannot fall back to a different region than TF_VAR_aws_region (a common cause
+          # of "import not found" + apply hitting DBClusterAlreadyExistsFault).
+          if [ -z "${TF_VAR_aws_region:-}" ]; then
+            echo "::error::TF_VAR_aws_region is empty. Set GitHub secret ALEX_AWS_REGION to your RDS region."
+            exit 1
+          fi
+          export AWS_DEFAULT_REGION="${TF_VAR_aws_region}"
+          export AWS_REGION="${TF_VAR_aws_region}"
+          echo "Using AWS region for CLI + Terraform provider: ${AWS_REGION}"
+          IMPORT_VARS=(-var="aws_region=${TF_VAR_aws_region}")
 
           terraform init -input=false
           # Local state is not persisted in CI. Terraform never "skips" creates by name — it only
@@ -108,16 +114,21 @@ jobs:
             fi
             local out
             set +e
-            out="$(terraform import -input=false "$addr" "$aws_id" 2>&1)"
+            out="$(terraform import -input=false "${IMPORT_VARS[@]}" "$addr" "$aws_id" 2>&1)"
             local ec=$?
             set -e
             if [ "$ec" -eq 0 ]; then
               echo "$out"
+              if ! terraform state show "$addr" >/dev/null 2>&1; then
+                echo "::error::terraform import reported success but $addr is not in state afterward (wrong id/region or provider issue)."
+                exit 1
+              fi
               return 0
             fi
             if [[ "$out" == *"Cannot import non-existent remote object"* ]] \
               || [[ "$out" == *"DBClusterNotFoundFault"* ]] \
               || [[ "$out" == *"DBInstanceNotFound"* ]] \
+              || [[ "$out" == *"DBSubnetGroupNotFoundFault"* ]] \
               || [[ "$out" == *"NoSuchEntity"* ]] \
               || [[ "$out" == *"Subnet group not found"* ]]; then
               echo "$out"
@@ -142,7 +153,7 @@ jobs:
           echo "Current Terraform state entries:"
           terraform state list || true
 
-          terraform apply -auto-approve
+          terraform apply -auto-approve "${IMPORT_VARS[@]}"
 
       # Step 2: Deploy the 6_agents infrastructure
       - name: Terraform init (6_agents)
