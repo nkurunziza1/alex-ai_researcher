@@ -237,6 +237,23 @@ jobs:
           export AWS_REGION="${TF_VAR_aws_region}"
           TFVARS=(-var="aws_region=${TF_VAR_aws_region}")
 
+          # If reuse mode is enabled, old state may still track resources that were once
+          # managed by Terraform (role/bucket/log groups). Drop those stale entries so
+          # apply does not try destructive deletes (e.g., non-empty bucket delete).
+          if [ "${TF_VAR_reuse_existing_agent_infrastructure:-false}" = "true" ]; then
+            for addr in \
+              "aws_iam_role.lambda_agents_role[0]" \
+              "aws_s3_bucket.lambda_packages[0]" \
+              "aws_cloudwatch_log_group.agent_logs[\"planner\"]" \
+              "aws_cloudwatch_log_group.agent_logs[\"tagger\"]" \
+              "aws_cloudwatch_log_group.agent_logs[\"reporter\"]" \
+              "aws_cloudwatch_log_group.agent_logs[\"charter\"]" \
+              "aws_cloudwatch_log_group.agent_logs[\"retirement\"]"
+            do
+              terraform state rm "$addr" >/dev/null 2>&1 || true
+            done
+          fi
+
           import_if_missing() {
             local addr="$1"
             local import_id="$2"
