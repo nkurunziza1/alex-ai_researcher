@@ -233,6 +233,12 @@ jobs:
             echo "::error::TF_VAR_aws_region is empty. Set GitHub secret ALEX_AWS_REGION."
             exit 1
           fi
+          # Reuse mode needs pre-existing shared role. If it was removed, fallback to create mode.
+          if [ "${TF_VAR_reuse_existing_agent_infrastructure:-false}" = "true" ] && ! aws iam get-role --role-name alex-lambda-agents-role >/dev/null 2>&1; then
+            echo "::warning::reuse_existing_agent_infrastructure=true but alex-lambda-agents-role is missing; using create mode for this run."
+            echo "TF_VAR_reuse_existing_agent_infrastructure=false" >> "$GITHUB_ENV"
+            export TF_VAR_reuse_existing_agent_infrastructure=false
+          fi
           export AWS_DEFAULT_REGION="${TF_VAR_aws_region}"
           export AWS_REGION="${TF_VAR_aws_region}"
           TFVARS=(-var="aws_region=${TF_VAR_aws_region}")
@@ -284,6 +290,19 @@ jobs:
             echo "$out"
             return "$ec"
           }
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          LAMBDA_BUCKET="alex-lambda-packages-${ACCOUNT_ID}"
+
+          # In create mode, import shared infra if it already exists to avoid conflicts.
+          if [ "${TF_VAR_reuse_existing_agent_infrastructure:-false}" != "true" ]; then
+            if aws iam get-role --role-name alex-lambda-agents-role >/dev/null 2>&1; then
+              import_if_missing "aws_iam_role.lambda_agents_role[0]" "alex-lambda-agents-role"
+            fi
+            if aws s3api head-bucket --bucket "${LAMBDA_BUCKET}" >/dev/null 2>&1; then
+              import_if_missing "aws_s3_bucket.lambda_packages[0]" "${LAMBDA_BUCKET}"
+            fi
+          fi
 
           # Import existing queues by URL (if they already exist).
           DLQ_URL="$(aws sqs get-queue-url --queue-name alex-analysis-jobs-dlq --query QueueUrl --output text 2>/dev/null || true)"
