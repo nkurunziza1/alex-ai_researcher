@@ -83,8 +83,12 @@ jobs:
           echo "TF_LOCK_TABLE=${LOCK_TABLE}" >> "$GITHUB_ENV"
 
           if ! aws s3api head-bucket --bucket "${STATE_BUCKET}" >/dev/null 2>&1; then
-            aws s3api create-bucket --bucket "${STATE_BUCKET}" --region "${REGION}" \
-              --create-bucket-configuration LocationConstraint="${REGION}"
+            if [ "${REGION}" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "${STATE_BUCKET}"
+            else
+              aws s3api create-bucket --bucket "${STATE_BUCKET}" --region "${REGION}" \
+                --create-bucket-configuration LocationConstraint="${REGION}"
+            fi
           fi
           aws s3api put-bucket-versioning --bucket "${STATE_BUCKET}" \
             --versioning-configuration Status=Enabled
