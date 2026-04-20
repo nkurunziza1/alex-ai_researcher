@@ -321,6 +321,32 @@ jobs:
             import_if_missing aws_lambda_permission.api_gw alex-api/AllowExecutionFromAPIGateway
           fi
 
+          # Reuse an existing HTTP API to avoid creating duplicate alex-api-gateway APIs in CI.
+          API_ID="$(aws apigatewayv2 get-apis --query "reverse(sort_by(Items[?Name=='alex-api-gateway' && ProtocolType=='HTTP'], &CreatedDate))[0].ApiId" --output text 2>/dev/null || true)"
+          if [ -n "${API_ID}" ] && [ "${API_ID}" != "None" ]; then
+            import_if_missing aws_apigatewayv2_api.main "${API_ID}"
+
+            DEFAULT_STAGE="$(aws apigatewayv2 get-stages --api-id "${API_ID}" --query "Items[?StageName=='\$default'].StageName | [0]" --output text 2>/dev/null || true)"
+            if [ -n "${DEFAULT_STAGE}" ] && [ "${DEFAULT_STAGE}" != "None" ]; then
+              import_if_missing aws_apigatewayv2_stage.default "${API_ID}/\$default"
+            fi
+
+            INTEGRATION_ID="$(aws apigatewayv2 get-integrations --api-id "${API_ID}" --query "Items[?IntegrationType=='AWS_PROXY'].IntegrationId | [0]" --output text 2>/dev/null || true)"
+            if [ -n "${INTEGRATION_ID}" ] && [ "${INTEGRATION_ID}" != "None" ]; then
+              import_if_missing aws_apigatewayv2_integration.lambda "${API_ID}/${INTEGRATION_ID}"
+            fi
+
+            ROUTE_ANY_ID="$(aws apigatewayv2 get-routes --api-id "${API_ID}" --query "Items[?RouteKey=='ANY /api/{proxy+}'].RouteId | [0]" --output text 2>/dev/null || true)"
+            if [ -n "${ROUTE_ANY_ID}" ] && [ "${ROUTE_ANY_ID}" != "None" ]; then
+              import_if_missing aws_apigatewayv2_route.api_any "${API_ID}/${ROUTE_ANY_ID}"
+            fi
+
+            ROUTE_OPTIONS_ID="$(aws apigatewayv2 get-routes --api-id "${API_ID}" --query "Items[?RouteKey=='OPTIONS /api/{proxy+}'].RouteId | [0]" --output text 2>/dev/null || true)"
+            if [ -n "${ROUTE_OPTIONS_ID}" ] && [ "${ROUTE_OPTIONS_ID}" != "None" ]; then
+              import_if_missing aws_apigatewayv2_route.api_options "${API_ID}/${ROUTE_OPTIONS_ID}"
+            fi
+          fi
+
       - name: Run full deployment
         working-directory: scripts
         run: uv run deploy.py
