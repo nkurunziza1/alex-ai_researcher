@@ -191,6 +191,10 @@ jobs:
           try_import_if_absent aws_rds_cluster.aurora alex-aurora-cluster
           try_import_if_absent aws_rds_cluster_instance.aurora alex-aurora-instance-1
 
+          # Cleanup stale state entry from older configs (resource removed from code).
+          # Without this, Terraform may try to destroy SG and fail on ENI detach perms in CI role.
+          terraform state rm aws_security_group.aurora >/dev/null 2>&1 || true
+
           echo "Current Terraform state entries:"
           terraform state list || true
 
