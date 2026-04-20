@@ -21,17 +21,21 @@ data "aws_region" "current" {}
 
 # Reference Part 5 Database resources
 data "terraform_remote_state" "database" {
-  backend = "local"
+  backend = "s3"
   config = {
-    path = "../5_database/terraform.tfstate"
+    bucket = var.tf_state_bucket
+    key    = var.tf_state_database_key
+    region = var.tf_state_region
   }
 }
 
 # Reference Part 6 Agents resources
 data "terraform_remote_state" "agents" {
-  backend = "local"
+  backend = "s3"
   config = {
-    path = "../6_agents/terraform.tfstate"
+    bucket = var.tf_state_bucket
+    key    = var.tf_state_agents_key
+    region = var.tf_state_region
   }
 }
 
