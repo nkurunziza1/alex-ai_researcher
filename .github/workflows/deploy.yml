@@ -160,8 +160,12 @@ jobs:
         working-directory: backend
         run: |
           # terraform/6_agents uploads local zip files to S3; ensure they exist first.
+          # Do NOT call deploy_all_lambdas.py here: even with --package it also runs Terraform.
           unset VIRTUAL_ENV
-          uv run deploy_all_lambdas.py --package
+          for agent in planner tagger reporter charter retirement; do
+            echo "Packaging ${agent}..."
+            (cd "$agent" && uv run package_docker.py)
+          done
 
       # Step 3: Deploy the 6_agents infrastructure
       - name: Terraform init (6_agents)
@@ -177,14 +181,6 @@ jobs:
       - name: Terraform apply (6_agents)
         working-directory: terraform/6_agents
         run: terraform apply -auto-approve
-
-      - name: Deploy agent Lambdas from prepared packages
-        working-directory: backend
-        run: |
-          # Avoid inheriting backend/.venv as VIRTUAL_ENV when each agent uses its own .venv.
-          # Packaging already happened before terraform/6_agents apply.
-          unset VIRTUAL_ENV
-          uv run deploy_all_lambdas.py
 
       - name: Sync backend API project (package_docker for API Lambda)
         working-directory: backend/api
