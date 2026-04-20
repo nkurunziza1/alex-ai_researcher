@@ -317,6 +317,8 @@ jobs:
 
           if aws lambda get-function --function-name alex-api >/dev/null 2>&1; then
             import_if_missing aws_lambda_function.api alex-api
+            # Avoid AddPermission 409 when statement already exists on the function.
+            import_if_missing aws_lambda_permission.api_gw alex-api/AllowExecutionFromAPIGateway
           fi
 
       - name: Run full deployment
