@@ -107,7 +107,7 @@ def start_backend():
         ["uv", "run", "main.py"],
         cwd=backend_dir,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,  # Surface backend exceptions in the same log stream
         text=True,
         bufsize=1
     )

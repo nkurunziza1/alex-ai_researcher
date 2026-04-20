@@ -126,7 +126,9 @@ export default function Dashboard() {
         });
 
         if (!userResponse.ok) {
-          throw new Error(`Failed to sync user: ${userResponse.status}`);
+          const errText = await userResponse.text().catch(() => "");
+          const detail = errText ? ` - ${errText.slice(0, 200)}` : "";
+          throw new Error(`Failed to sync user: ${userResponse.status}${detail}`);
         }
 
         const response = await userResponse.json();
