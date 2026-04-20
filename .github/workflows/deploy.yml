@@ -260,6 +260,65 @@ jobs:
           NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard
           EOF
 
+      - name: Import existing resources (7_frontend)
+        working-directory: terraform/7_frontend
+        run: |
+          set -euo pipefail
+          if [ -z "${TF_VAR_aws_region:-}" ]; then
+            echo "::error::TF_VAR_aws_region is empty. Set GitHub secret ALEX_AWS_REGION."
+            exit 1
+          fi
+          export AWS_DEFAULT_REGION="${TF_VAR_aws_region}"
+          export AWS_REGION="${TF_VAR_aws_region}"
+          TFVARS=(-var="aws_region=${TF_VAR_aws_region}")
+
+          terraform init -input=false
+
+          import_if_missing() {
+            local addr="$1"
+            local import_id="$2"
+            if terraform state show "$addr" >/dev/null 2>&1; then
+              echo "$addr already in Terraform state; skip import."
+              return 0
+            fi
+            set +e
+            out="$(terraform import -input=false "${TFVARS[@]}" "$addr" "$import_id" 2>&1)"
+            ec=$?
+            set -e
+            if [ "$ec" -eq 0 ]; then
+              echo "$out"
+              return 0
+            fi
+            if [[ "$out" == *"Cannot import non-existent remote object"* ]] \
+              || [[ "$out" == *"NoSuchEntity"* ]] \
+              || [[ "$out" == *"ResourceNotFoundException"* ]]; then
+              echo "$out"
+              echo "Import skipped ($addr not found remotely)."
+              return 0
+            fi
+            if [[ "$out" == *"Resource already managed by Terraform"* ]] || [[ "$out" == *"already in state"* ]]; then
+              echo "$addr already tracked; continuing."
+              return 0
+            fi
+            echo "$out"
+            return "$ec"
+          }
+
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          FRONTEND_BUCKET="alex-frontend-${ACCOUNT_ID}"
+
+          if aws s3api head-bucket --bucket "${FRONTEND_BUCKET}" >/dev/null 2>&1; then
+            import_if_missing aws_s3_bucket.frontend "${FRONTEND_BUCKET}"
+          fi
+
+          if aws iam get-role --role-name alex-api-lambda-role >/dev/null 2>&1; then
+            import_if_missing aws_iam_role.api_lambda_role alex-api-lambda-role
+          fi
+
+          if aws lambda get-function --function-name alex-api >/dev/null 2>&1; then
+            import_if_missing aws_lambda_function.api alex-api
+          fi
+
       - name: Run full deployment
         working-directory: scripts
         run: uv run deploy.py
