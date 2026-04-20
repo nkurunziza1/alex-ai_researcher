@@ -29,6 +29,7 @@ env:
   TF_VAR_polygon_plan: ${{ secrets.POLYGON_PLAN != '' && secrets.POLYGON_PLAN || 'free' }}
   TF_VAR_clerk_jwks_url: ${{ secrets.ALEX_CLERK_JWKS_URL }}
   TF_VAR_clerk_issuer: ${{ secrets.ALEX_CLERK_ISSUER }}
+  TF_STATE_REGION: ${{ secrets.ALEX_AWS_REGION }}
 
 defaults:
   run:
@@ -70,6 +71,35 @@ jobs:
       - name: Print AWS identity
         run: aws sts get-caller-identity
 
+      - name: Prepare shared Terraform remote state backend
+        run: |
+          set -euo pipefail
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          STATE_BUCKET="alex-terraform-state-${ACCOUNT_ID}"
+          LOCK_TABLE="alex-terraform-locks"
+          REGION="${TF_STATE_REGION}"
+
+          echo "TF_STATE_BUCKET=${STATE_BUCKET}" >> "$GITHUB_ENV"
+          echo "TF_LOCK_TABLE=${LOCK_TABLE}" >> "$GITHUB_ENV"
+
+          if ! aws s3api head-bucket --bucket "${STATE_BUCKET}" >/dev/null 2>&1; then
+            aws s3api create-bucket --bucket "${STATE_BUCKET}" --region "${REGION}" \
+              --create-bucket-configuration LocationConstraint="${REGION}"
+          fi
+          aws s3api put-bucket-versioning --bucket "${STATE_BUCKET}" \
+            --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket "${STATE_BUCKET}" \
+            --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+
+          if ! aws dynamodb describe-table --table-name "${LOCK_TABLE}" >/dev/null 2>&1; then
+            aws dynamodb create-table \
+              --table-name "${LOCK_TABLE}" \
+              --attribute-definitions AttributeName=LockID,AttributeType=S \
+              --key-schema AttributeName=LockID,KeyType=HASH \
+              --billing-mode PAY_PER_REQUEST
+            aws dynamodb wait table-exists --table-name "${LOCK_TABLE}"
+          fi
+
       - name: Sync backend workspace
         working-directory: backend
         run: uv sync
@@ -97,7 +127,12 @@ jobs:
           echo "Using AWS region for CLI + Terraform provider: ${AWS_REGION}"
           IMPORT_VARS=(-var="aws_region=${TF_VAR_aws_region}")
 
-          terraform init -input=false
+          terraform init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=alex/5_database/terraform.tfstate" \
+            -backend-config="region=${TF_STATE_REGION}" \
+            -backend-config="dynamodb_table=${TF_LOCK_TABLE}" \
+            -backend-config="encrypt=true"
           # Local state is not persisted in CI. Terraform never "skips" creates by name — it only
           # knows what is in state. If a resource exists in AWS but not state, we must import it
           # or apply will try to create and fail with AlreadyExists.
@@ -154,6 +189,8 @@ jobs:
           terraform state list || true
 
           terraform apply -auto-approve "${IMPORT_VARS[@]}"
+          # Keep local snapshot for Part 7's existing local terraform_remote_state reads.
+          terraform state pull > terraform.tfstate
 
       # Step 2: Build agent zip packages needed by terraform/6_agents
       - name: Package agent Lambdas for terraform (6_agents)
@@ -170,7 +207,13 @@ jobs:
       # Step 3: Deploy the 6_agents infrastructure
       - name: Terraform init (6_agents)
         working-directory: terraform/6_agents
-        run: terraform init -input=false
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=alex/6_agents/terraform.tfstate" \
+            -backend-config="region=${TF_STATE_REGION}" \
+            -backend-config="dynamodb_table=${TF_LOCK_TABLE}" \
+            -backend-config="encrypt=true"
 
       - name: Import existing resources (if necessary)
         working-directory: terraform/6_agents
@@ -241,7 +284,10 @@ jobs:
 
       - name: Terraform apply (6_agents)
         working-directory: terraform/6_agents
-        run: terraform apply -auto-approve -var="aws_region=${TF_VAR_aws_region}"
+        run: |
+          terraform apply -auto-approve -var="aws_region=${TF_VAR_aws_region}"
+          # Keep local snapshot for Part 7's existing local terraform_remote_state reads.
+          terraform state pull > terraform.tfstate
 
       - name: Sync backend API project (package_docker for API Lambda)
         working-directory: backend/api
@@ -272,7 +318,12 @@ jobs:
           export AWS_REGION="${TF_VAR_aws_region}"
           TFVARS=(-var="aws_region=${TF_VAR_aws_region}")
 
-          terraform init -input=false
+          terraform init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=alex/7_frontend/terraform.tfstate" \
+            -backend-config="region=${TF_STATE_REGION}" \
+            -backend-config="dynamodb_table=${TF_LOCK_TABLE}" \
+            -backend-config="encrypt=true"
 
           import_if_missing() {
             local addr="$1"
@@ -349,4 +400,9 @@ jobs:
 
       - name: Run full deployment
         working-directory: scripts
+        env:
+          TF_STATE_BUCKET: ${{ env.TF_STATE_BUCKET }}
+          TF_LOCK_TABLE: ${{ env.TF_LOCK_TABLE }}
+          TF_STATE_REGION: ${{ env.TF_STATE_REGION }}
+          TF_STATE_KEY: alex/7_frontend/terraform.tfstate
         run: uv run deploy.py

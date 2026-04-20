@@ -174,10 +174,22 @@ def deploy_terraform():
         print(f"  ❌ Terraform directory not found: {terraform_dir}")
         sys.exit(1)
 
-    # Initialize Terraform if needed
-    if not (terraform_dir / ".terraform").exists():
-        print("  Initializing Terraform...")
-        run_command(["terraform", "init"], cwd=terraform_dir)
+    # Initialize Terraform (supports optional remote state backend via env vars)
+    print("  Initializing Terraform...")
+    init_cmd = ["terraform", "init"]
+    tf_state_bucket = os.getenv("TF_STATE_BUCKET")
+    tf_lock_table = os.getenv("TF_LOCK_TABLE")
+    tf_state_region = os.getenv("TF_STATE_REGION") or os.getenv("AWS_REGION")
+    tf_state_key = os.getenv("TF_STATE_KEY", "alex/7_frontend/terraform.tfstate")
+    if tf_state_bucket and tf_lock_table and tf_state_region:
+        init_cmd.extend([
+            f"-backend-config=bucket={tf_state_bucket}",
+            f"-backend-config=key={tf_state_key}",
+            f"-backend-config=region={tf_state_region}",
+            f"-backend-config=dynamodb_table={tf_lock_table}",
+            "-backend-config=encrypt=true",
+        ])
+    run_command(init_cmd, cwd=terraform_dir)
 
     # Plan the deployment
     print("  Planning deployment...")
