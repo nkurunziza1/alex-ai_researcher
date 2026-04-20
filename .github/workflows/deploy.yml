@@ -322,6 +322,25 @@ jobs:
           export AWS_REGION="${TF_VAR_aws_region}"
           TFVARS=(-var="aws_region=${TF_VAR_aws_region}")
 
+          # Part 7 currently reads Part 5/6 outputs from local state files via
+          # data.terraform_remote_state backend="local". In CI, ensure those snapshots exist
+          # by pulling from the shared S3 backend right before Part 7 operations.
+          terraform -chdir=../5_database init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=alex/5_database/terraform.tfstate" \
+            -backend-config="region=${TF_STATE_REGION}" \
+            -backend-config="dynamodb_table=${TF_LOCK_TABLE}" \
+            -backend-config="encrypt=true"
+          terraform -chdir=../5_database state pull > ../5_database/terraform.tfstate
+
+          terraform -chdir=../6_agents init -input=false \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=alex/6_agents/terraform.tfstate" \
+            -backend-config="region=${TF_STATE_REGION}" \
+            -backend-config="dynamodb_table=${TF_LOCK_TABLE}" \
+            -backend-config="encrypt=true"
+          terraform -chdir=../6_agents state pull > ../6_agents/terraform.tfstate
+
           terraform init -input=false \
             -backend-config="bucket=${TF_STATE_BUCKET}" \
             -backend-config="key=alex/7_frontend/terraform.tfstate" \
