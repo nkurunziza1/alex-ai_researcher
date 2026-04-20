@@ -175,12 +175,73 @@ jobs:
       - name: Import existing resources (if necessary)
         working-directory: terraform/6_agents
         run: |
-          # Import the existing Lambda event source mapping
-          terraform import aws_lambda_event_source_mapping.planner_sqs fee018d8-0872-44e2-a4d3-1ea3d57aa0f7 || echo "Resource already imported or does not exist"
+          set -euo pipefail
+          if [ -z "${TF_VAR_aws_region:-}" ]; then
+            echo "::error::TF_VAR_aws_region is empty. Set GitHub secret ALEX_AWS_REGION."
+            exit 1
+          fi
+          export AWS_DEFAULT_REGION="${TF_VAR_aws_region}"
+          export AWS_REGION="${TF_VAR_aws_region}"
+          TFVARS=(-var="aws_region=${TF_VAR_aws_region}")
+
+          import_if_missing() {
+            local addr="$1"
+            local import_id="$2"
+            if terraform state show "$addr" >/dev/null 2>&1; then
+              echo "$addr already in Terraform state; skip import."
+              return 0
+            fi
+            set +e
+            out="$(terraform import -input=false "${TFVARS[@]}" "$addr" "$import_id" 2>&1)"
+            ec=$?
+            set -e
+            if [ "$ec" -eq 0 ]; then
+              echo "$out"
+              return 0
+            fi
+            if [[ "$out" == *"Cannot import non-existent remote object"* ]] \
+              || [[ "$out" == *"ResourceNotFoundException"* ]] \
+              || [[ "$out" == *"NonExistentQueue"* ]] \
+              || [[ "$out" == *"NoSuchEntity"* ]]; then
+              echo "$out"
+              echo "Import skipped ($addr not found remotely)."
+              return 0
+            fi
+            if [[ "$out" == *"Resource already managed by Terraform"* ]] || [[ "$out" == *"already in state"* ]]; then
+              echo "$addr already tracked; continuing."
+              return 0
+            fi
+            echo "$out"
+            return "$ec"
+          }
+
+          # Import existing queues by URL (if they already exist).
+          DLQ_URL="$(aws sqs get-queue-url --queue-name alex-analysis-jobs-dlq --query QueueUrl --output text 2>/dev/null || true)"
+          if [ -n "${DLQ_URL}" ]; then
+            import_if_missing aws_sqs_queue.analysis_jobs_dlq "${DLQ_URL}"
+          fi
+
+          MAIN_URL="$(aws sqs get-queue-url --queue-name alex-analysis-jobs --query QueueUrl --output text 2>/dev/null || true)"
+          if [ -n "${MAIN_URL}" ]; then
+            import_if_missing aws_sqs_queue.analysis_jobs "${MAIN_URL}"
+          fi
+
+          # Import existing Lambda functions to avoid CreateFunction 409 conflicts.
+          for fn in planner tagger reporter charter retirement; do
+            if aws lambda get-function --function-name "alex-${fn}" >/dev/null 2>&1; then
+              import_if_missing "aws_lambda_function.${fn}" "alex-${fn}"
+            fi
+          done
+
+          # Import planner event source mapping if already present.
+          PLANNER_UUID="$(aws lambda list-event-source-mappings --function-name alex-planner --event-source-arn "$(aws sqs get-queue-attributes --queue-url "${MAIN_URL}" --attribute-names QueueArn --query 'Attributes.QueueArn' --output text 2>/dev/null || true)" --query 'EventSourceMappings[0].UUID' --output text 2>/dev/null || true)"
+          if [ -n "${PLANNER_UUID}" ] && [ "${PLANNER_UUID}" != "None" ]; then
+            import_if_missing aws_lambda_event_source_mapping.planner_sqs "${PLANNER_UUID}"
+          fi
 
       - name: Terraform apply (6_agents)
         working-directory: terraform/6_agents
-        run: terraform apply -auto-approve
+        run: terraform apply -auto-approve -var="aws_region=${TF_VAR_aws_region}"
 
       - name: Sync backend API project (package_docker for API Lambda)
         working-directory: backend/api
