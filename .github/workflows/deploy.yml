@@ -225,7 +225,7 @@ jobs:
             -backend-config="dynamodb_table=${TF_LOCK_TABLE}" \
             -backend-config="encrypt=true"
 
-      - name: Import existing resources (if necessary)
+      - name: Import existing resources
         working-directory: terraform/6_agents
         run: |
           set -euo pipefail
